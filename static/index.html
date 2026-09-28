@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Incident Memory Agent · Hindsight</title>
+<style>
+:root{--bg:#0e1116;--card:#171b22;--bd:#2a313c;--tx:#e6e9ef;--mut:#8b95a5;--acc:#4ade80;--bad:#f87171}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,sans-serif}
+header{padding:18px 28px;border-bottom:1px solid var(--bd)}h1{margin:0;font-size:20px}
+header p{margin:2px 0 0;color:var(--mut);font-size:13px}
+main{max-width:1200px;margin:0 auto;padding:22px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px}
+textarea,input{width:100%;background:#0b0e13;color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:10px;font:13px ui-monospace,monospace}
+textarea{min-height:120px;resize:vertical}
+button{background:var(--acc);color:#04210f;border:0;border-radius:8px;padding:9px 16px;font-weight:600;cursor:pointer}
+button.ghost{background:transparent;color:var(--mut);border:1px solid var(--bd)}button:disabled{opacity:.5}
+.row{display:flex;gap:10px;margin-top:10px;align-items:center;flex-wrap:wrap}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:18px}@media(max-width:850px){.cols{grid-template-columns:1fr}}
+h2{margin:0 0 8px;font-size:15px}.tag{font-size:11px;padding:2px 8px;border-radius:99px;margin-left:6px}
+.t-no{background:#3b1d1d;color:var(--bad)}.t-yes{background:#123524;color:var(--acc)}
+.out{font-size:14px}.out h2{margin:14px 0 4px;color:var(--acc);font-size:14px}.out li{margin:3px 0}
+.mem{margin-top:14px;border-top:1px dashed var(--bd);padding-top:10px;font-size:12px;color:var(--mut)}
+.mem summary{cursor:pointer;color:var(--acc)}.mem div{margin:6px 0;padding:6px 8px;background:#0b0e13;border-radius:6px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.grid2 label{font-size:12px;color:var(--mut)}
+#status{color:var(--mut);font-size:13px}.err{color:var(--bad)}
+</style></head><body>
+<header><h1>🧠 Incident Memory Agent</h1>
+<p>Same LLM, two agents: one stateless, one with persistent memory in Hindsight.</p></header>
+<main>
+<div class="card">
+  <h2>Live alert</h2>
+  <textarea id="alert" placeholder="Paste PagerDuty / Alertmanager text + log sample…"></textarea>
+  <div class="row"><button id="go">Triage incident</button>
+    <button class="ghost" id="demo">Load demo alert</button><span id="status"></span></div>
+</div>
+<div class="cols">
+  <div class="card"><h2>Without memory <span class="tag t-no">generic</span></h2><div class="out" id="base">—</div></div>
+  <div class="card"><h2>With Hindsight memory <span class="tag t-yes">learns</span></h2><div class="out" id="mem">—</div>
+    <details class="mem" id="evid" hidden><summary id="evsum"></summary><div id="evlist"></div></details></div>
+</div>
+<div class="card" style="margin-top:18px">
+  <h2>Teach the agent · resolve the incident</h2>
+  <p style="color:var(--mut);font-size:13px;margin:0 0 10px">What actually happened? This is retained in Hindsight and used in future incidents.</p>
+  <div class="grid2">
+    <div><label>Service</label><input id="f_service" value="payments-api"></div>
+    <div><label>Title</label><input id="f_title"></div>
+    <div><label>Root cause</label><input id="f_root_cause"></div>
+    <div><label>Resolution that worked</label><input id="f_resolution"></div>
+    <div><label>What failed / wasted time</label><input id="f_failed"></div>
+    <div><label>Was the agent's suggestion helpful?</label><input id="f_agent_feedback" placeholder="helpful / partly / wrong because…"></div>
+    <div><label>Time to resolve (min)</label><input id="f_ttr_minutes"></div>
+    <div><label>Engineer</label><input id="f_engineer"></div>
+  </div>
+  <div class="row"><button id="save">Retain in memory</button><span id="status2"></span></div>
+</div></main>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+function md(t){let h=esc(t).replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/`([^`]+)`/g,'<code>$1</code>');
+  return h.split('\n').map(l=>/^##\s/.test(l)?`<h2>${l.slice(3)}</h2>`:/^\s*[-*]\s/.test(l)?`<li>${l.replace(/^\s*[-*]\s/,'')}</li>`:/^\s*\d+\.\s/.test(l)?`<li>${l.replace(/^\s*\d+\.\s/,'')}</li>`:l.trim()?`<div>${l}</div>`:'').join('')}
+$('demo').onclick=async()=>{$('alert').value=(await(await fetch('/api/demo-alert')).json()).alert};
+$('go').onclick=async()=>{
+  const alert=$('alert').value.trim();if(!alert)return;
+  $('go').disabled=true;$('status').textContent='Triaging… (recall + reflect + LLM)';$('status').className='';
+  $('base').textContent=$('mem').textContent='…';$('evid').hidden=true;
+  try{const r=await fetch('/api/triage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alert})});
+    const d=await r.json();if(!r.ok)throw new Error(d.error);
+    $('base').innerHTML=md(d.without_memory);$('mem').innerHTML=md(d.with_memory.answer);
+    const m=d.with_memory.memories;$('evsum').textContent=`Hindsight recalled ${m.length} memories`;
+    $('evlist').innerHTML=(d.with_memory.insight?`<div><b>Reflect:</b> ${esc(d.with_memory.insight)}</div>`:'')+m.map(x=>`<div>[${x.type}] ${esc(x.text)}</div>`).join('');
+    $('evid').hidden=false;$('status').textContent='';
+  }catch(e){$('status').textContent=e.message;$('status').className='err';$('base').textContent=$('mem').textContent='—'}
+  $('go').disabled=false};
+$('save').onclick=async()=>{
+  const k=['service','title','root_cause','resolution','failed','agent_feedback','ttr_minutes','engineer'];
+  const body={symptoms:$('alert').value.trim()};k.forEach(x=>body[x]=$('f_'+x).value);
+  const r=await fetch('/api/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d=await r.json();$('status2').textContent=r.ok?`Retained as ${d.id} ✓ — run triage again to see it recalled`:d.error;$('status2').className=r.ok?'':'err'};
+</script></body></html>
